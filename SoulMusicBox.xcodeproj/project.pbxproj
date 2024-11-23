@@ -112,6 +112,7 @@
 			);
 			name = SoulMusicBox;
 			packageProductDependencies = (
+				729D4E162CF1CA6C002D5FCC /* Yams */,
 			);
 			productName = SoulMusicBox;
 			productReference = 72AFBC672CF05A0700E913FF /* SoulMusicBox.app */;
@@ -195,6 +196,9 @@
 			);
 			mainGroup = 72AFBC5E2CF05A0600E913FF;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				729D4E152CF1CA6C002D5FCC /* XCRemoteSwiftPackageReference "Yams" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 72AFBC682CF05A0700E913FF /* Products */;
 			projectDirPath = "";
@@ -583,6 +587,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		729D4E152CF1CA6C002D5FCC /* XCRemoteSwiftPackageReference "Yams" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jpsim/Yams.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.1.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		729D4E162CF1CA6C002D5FCC /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 729D4E152CF1CA6C002D5FCC /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 72AFBC5F2CF05A0600E913FF /* Project object */;
 }

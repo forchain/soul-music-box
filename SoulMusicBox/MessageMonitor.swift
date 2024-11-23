@@ -4,7 +4,6 @@ import ApplicationServices
 class MessageMonitor {
     static let shared = MessageMonitor()
     
-    private let soulBundleId = "com.soul.macapp"
     private var soulApp: NSRunningApplication?
     private var observer: AXObserver?
     private var lastProcessedMessage: String?
@@ -23,9 +22,15 @@ class MessageMonitor {
     }
     
     func startMonitoring() {
+        // Get Soul bundle ID from config
+        guard let bundleId = finder.getBundleId(for: "Soul") else {
+            logger.error("Failed to get Soul bundle ID from config")
+            return
+        }
+        
         // Find Soul application
         guard let app = NSWorkspace.shared.runningApplications.first(where: { app in
-            app.bundleIdentifier == soulBundleId
+            app.bundleIdentifier == bundleId
         }) else {
             logger.error("Soul app is not running")
             return

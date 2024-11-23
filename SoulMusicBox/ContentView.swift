@@ -25,6 +25,7 @@ struct ContentView: View {
         .onAppear {
             viewModel.checkAllElements()
         }
+        .frame(width: 600)  // 设置一个固定宽度，避免窗口过大
     }
 }
 
@@ -34,10 +35,26 @@ struct StatusSection: View {
     
     var body: some View {
         GroupBox("应用状态") {
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    StatusRow(title: "无障碍权限", isEnabled: viewModel.isAccessibilityEnabled)
+                    Spacer()
+                    if !viewModel.isAccessibilityEnabled {
+                        Button(action: {
+                            viewModel.showAccessibilityInstructions = true
+                        }) {
+                            Text("设置")
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .focusable(false)
+                        .sheet(isPresented: $viewModel.showAccessibilityInstructions) {
+                            AccessibilityPermissionAlert(viewModel: viewModel)
+                        }
+                    }
+                }
                 StatusRow(title: "QQ音乐", isRunning: viewModel.isQQMusicRunning)
                 StatusRow(title: "Soul", isRunning: viewModel.isSoulRunning)
-                StatusRow(title: "无障碍权限", isEnabled: viewModel.isAccessibilityEnabled)
             }
             .padding(.vertical, 5)
         }
@@ -94,6 +111,7 @@ struct StatusRow: View {
             Spacer()
             Image(systemName: isRunning ? "checkmark.circle.fill" : "x.circle.fill")
                 .foregroundColor(isRunning ? .green : .red)
+                .frame(width: 20, height: 20)  // 固定图标大小
         }
     }
 }
@@ -135,13 +153,14 @@ class ContentViewModel: ObservableObject {
     @Published var isAccessibilityEnabled = false
     @Published var elementCheckResults: [ElementCheckResult] = []
     @Published var logs: [LogEntry] = []
+    @Published var showAccessibilityInstructions = false
     
     private let finder = UIElementFinder.shared
     private let logger = Logger.shared
     
     init() {
         setupLoggerCallback()
-        checkApplicationStatus()
+        loadConfigAndCheckStatus()
     }
     
     private func setupLoggerCallback() {
@@ -152,57 +171,63 @@ class ContentViewModel: ObservableObject {
         }
     }
     
+    private func loadConfigAndCheckStatus() {
+        do {
+            try finder.loadConfig(from: "ui_config")
+            checkApplicationStatus()
+        } catch {
+            logger.error("Failed to load config: \(error)")
+        }
+    }
+    
     func checkApplicationStatus() {
         isAccessibilityEnabled = AXIsProcessTrustedWithOptions(nil)
         
-        isQQMusicRunning = NSWorkspace.shared.runningApplications.contains { app in
-            app.bundleIdentifier == "com.tencent.QQMusicMac"
+        // 从配置中获取 bundleId
+        if let qqMusicBundleId = finder.getBundleId(for: "QQMusic") {
+            isQQMusicRunning = NSWorkspace.shared.runningApplications.contains { app in
+                app.bundleIdentifier == qqMusicBundleId
+            }
         }
         
-        isSoulRunning = NSWorkspace.shared.runningApplications.contains { app in
-            app.bundleIdentifier == "com.soul.macapp"
+        if let soulBundleId = finder.getBundleId(for: "Soul") {
+            isSoulRunning = NSWorkspace.shared.runningApplications.contains { app in
+                app.bundleIdentifier == soulBundleId
+            }
         }
     }
     
     func checkAllElements() {
-        do {
-            try finder.loadConfig(from: "ui_config")
-            
-            // 检查 QQ音乐的控件
-            if isQQMusicRunning {
-                try checkQQMusicElements()
-            }
-            
-            // 检查 Soul的控件
-            if isSoulRunning {
-                try checkSoulElements()
-            }
-            
-        } catch {
-            logger.error("加载配置文件失败: \(error)")
+        // 不再重复加载配置
+        if isQQMusicRunning {
+            try? checkQQMusicElements()
+        }
+        
+        if isSoulRunning {
+            try? checkSoulElements()
         }
     }
     
     private func checkQQMusicElements() throws {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.tencent.QQMusicMac" }) else {
+        guard let bundleId = finder.getBundleId(for: "QQMusic"),
+              let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) else {
             logger.error("QQ音乐未运行")
             return
         }
         
         let appRef = AXUIElementCreateApplication(app.processIdentifier)
-        
         try checkElement(named: "searchBox", in: "QQMusic", parent: appRef)
         try checkElement(named: "searchResults", in: "QQMusic", parent: appRef)
     }
     
     private func checkSoulElements() throws {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.soul.macapp" }) else {
+        guard let bundleId = finder.getBundleId(for: "Soul"),
+              let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) else {
             logger.error("Soul未运行")
             return
         }
         
         let appRef = AXUIElementCreateApplication(app.processIdentifier)
-        
         try checkElement(named: "chatInput", in: "Soul", parent: appRef)
         try checkElement(named: "chatHistory", in: "Soul", parent: appRef)
     }
@@ -259,6 +284,88 @@ extension Logger.Level {
         case .info: return .primary
         case .error: return .red
         }
+    }
+}
+
+struct AccessibilityPermissionAlert: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var viewModel: ContentViewModel
+    
+    var body: some View {
+        VStack(spacing: 10) {
+            // 标题栏
+            HStack {
+                Text("需要无障碍权限")
+                    .font(.headline)
+                Spacer()
+                Button(action: {
+                    dismiss()
+                    viewModel.checkApplicationStatus()
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .focusable(false)
+            }
+            .padding(.bottom)
+            
+            Text("请按以下步骤开启权限：")
+                .font(.subheadline)
+            
+            VStack(alignment: .leading, spacing: 5) {
+                Text("1. 打开 系统偏好设置 > 安全性与隐私 > 隐私 > 辅助功能")
+                Text("2. 点击左下角锁图标解锁")
+                Text("3. 点击 + 号添加应用")
+                Text("4. 在 Finder 中前往以下路径：")
+                Text("   \(Bundle.main.bundlePath)")
+                    .foregroundColor(.blue)
+                    .textSelection(.enabled)  // 允许用户选择和复制路径
+                Text("5. 选择该应用并授权")
+                Text("6. 重启应用以使权限生效")
+            }
+            .padding()
+            .background(Color.gray.opacity(0.1))
+            .cornerRadius(8)
+            
+            // 底部按钮
+            Button(action: {
+                dismiss()
+                viewModel.checkApplicationStatus()
+            }) {
+                Text("我已完成设置")
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.blue)
+                    .cornerRadius(8)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .focusable(false)
+            .padding(.top)
+            
+            // Finder按钮
+            Button(action: {
+                NSWorkspace.shared.selectFile(Bundle.main.bundlePath, 
+                                            inFileViewerRootedAtPath: "")
+            }) {
+                Text("在 Finder 中显示应用")
+                    .foregroundColor(.blue)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .focusable(false)
+            .padding(.top, 5)
+        }
+        .padding()
+        .frame(width: 500)
+    }
+}
+
+struct PlainButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())  // 确保整个区域可点击
+            .opacity(configuration.isPressed ? 0.7 : 1.0)  // 点击时的反馈效果
     }
 }
 

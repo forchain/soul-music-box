@@ -1,5 +1,6 @@
 import Foundation
 import ApplicationServices
+import Yams
 
 struct UIElementPath {
     let role: String
@@ -33,7 +34,7 @@ struct UIElementPath {
     }
 }
 
-enum MatchType {
+enum MatchType: String, Codable {
     case exact       // 精确匹配
     case contains    // 包含匹配
     case startsWith  // 前缀匹配
@@ -53,21 +54,61 @@ class UIElementFinder {
     private let logger = Logger.shared
     
     func loadConfig(from file: String) throws {
-        guard let url = Bundle.main.url(forResource: file, withExtension: "yaml") else {
+        // 尝试多个可能的位置
+        let possiblePaths = [
+            // 1. 项目根目录
+            FileManager.default.currentDirectoryPath + "/\(file).yaml",
+            // 2. SoulMusicBox/Resources 目录
+            Bundle.main.bundlePath + "/Contents/Resources/\(file).yaml",
+            // 3. 开发时的项目目录
+            Bundle.main.bundlePath + "/\(file).yaml"
+        ]
+        
+        // logger.debug("Searching for config file in:")
+        // for path in possiblePaths {
+        //     logger.debug("- \(path)")
+        // }
+        
+        guard let configPath = possiblePaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            logger.error("Config file not found in any of the possible locations")
             throw ConfigError.fileNotFound
         }
         
         do {
-            // 使用新的 API 读取文件内容
-            let yamlString = try String(contentsOf: url, encoding: .utf8)
-            // TODO: Parse YAML and update configs
-            // You'll need to add a YAML parsing library like Yams
-            // configs = try YAMLDecoder().decode([String: AppUIConfig].self, from: yamlString)
-            _ = yamlString // 暂时使用这个变量以避免警告
+            let yamlString = try String(contentsOfFile: configPath, encoding: .utf8)
+            logger.info("Successfully loaded config from: \(configPath)")
+            
+            // 使用 Yams 解析 YAML
+            let decoder = YAMLDecoder()
+            let configData = try decoder.decode([String: AppConfig].self, from: yamlString)
+            
+            // 转换为内部配置格式
+            configs = configData.mapValues { config in
+                AppUIConfig(
+                    appName: config.name,
+                    bundleId: config.bundleId,
+                    elements: config.elements.mapValues { element in
+                        convertToUIElementPath(from: element)
+                    }
+                )
+            }
+            
+            logger.debug("Loaded configs for apps: \(configs.keys.joined(separator: ", "))")
         } catch {
-            logger.error("Failed to read config file: \(error)")
-            throw ConfigError.fileNotFound
+            logger.error("Failed to parse config file: \(error)")
+            throw ConfigError.invalidConfig
         }
+    }
+    
+    private func convertToUIElementPath(from element: ElementConfig) -> UIElementPath {
+        return UIElementPath(
+            role: element.role,
+            identifier: element.identifier,
+            label: element.label,
+            index: element.index,
+            matchType: element.matchType ?? .contains,
+            children: element.children?.map { convertToUIElementPath(from: $0) }
+        )
     }
     
     func findElement(named elementName: String, in app: String, parent: AXUIElement) throws -> AXUIElement? {
@@ -193,6 +234,13 @@ class UIElementFinder {
                 .firstMatch(in: string, range: NSRange(string.startIndex..., in: string))) != nil
         }
     }
+    
+    func getBundleId(for app: String) -> String? {
+        logger.debug("Getting bundleId for app: \(app)")
+        let bundleId = configs[app]?.bundleId
+        logger.debug("Found bundleId: \(bundleId ?? "nil")")
+        return bundleId
+    }
 }
 
 enum ConfigError: Error {
@@ -200,4 +248,39 @@ enum ConfigError: Error {
     case appConfigNotFound
     case elementPathNotFound
     case invalidConfig
+}
+
+// YAML 配置解析模型
+private struct AppConfig: Decodable {
+    let bundleId: String
+    var name: String { "" }  // 不从 YAML 中读取，使用默认值
+    let elements: [String: ElementConfig]
+    
+    private enum CodingKeys: String, CodingKey {
+        case bundleId, elements
+    }
+}
+
+private struct ElementConfig: Decodable {
+    let role: String
+    let identifier: String?
+    let label: String?
+    let index: Int?
+    let matchType: MatchType?
+    let children: [ElementConfig]?
+    
+    private enum CodingKeys: String, CodingKey {
+        case role, identifier, label, index, matchType, children
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        role = try container.decode(String.self, forKey: .role)
+        identifier = try container.decodeIfPresent(String.self, forKey: .identifier)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        index = try container.decodeIfPresent(Int.self, forKey: .index)
+        matchType = try container.decodeIfPresent(MatchType.self, forKey: .matchType)
+        children = try container.decodeIfPresent([ElementConfig].self, forKey: .children)
+    }
 } 

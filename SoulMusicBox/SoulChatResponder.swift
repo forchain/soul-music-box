@@ -5,7 +5,6 @@ import ApplicationServices
 class SoulChatResponder {
     static let shared = SoulChatResponder()
     
-    private let soulBundleId = "com.soul.macapp"
     private var soulApp: NSRunningApplication?
     private let finder = UIElementFinder.shared
     private let logger = Logger.shared
@@ -21,9 +20,13 @@ class SoulChatResponder {
     }
     
     private func activateSoulAndSendMessage(_ message: String) throws {
+        guard let bundleId = finder.getBundleId(for: "Soul") else {
+            throw ChatError.configNotFound
+        }
+        
         // Find Soul application
         guard let app = NSWorkspace.shared.runningApplications.first(where: { app in
-            app.bundleIdentifier == soulBundleId
+            app.bundleIdentifier == bundleId
         }) else {
             throw ChatError.appNotFound
         }
@@ -80,6 +83,7 @@ class SoulChatResponder {
 }
 
 enum ChatError: Error {
+    case configNotFound
     case appNotFound
     case windowNotFound
     case inputBoxNotFound

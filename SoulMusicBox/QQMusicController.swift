@@ -5,19 +5,19 @@ import ApplicationServices
 class QQMusicController {
     static let shared = QQMusicController()
     
-    private let qqMusicBundleId = "com.tencent.QQMusicMac"
     private var qqMusicApp: NSRunningApplication?
     private let finder = UIElementFinder.shared
     private let logger = Logger.shared
     
-    private init() {}
-    
     func playMusic(song: String, artist: String?) throws {
+        guard let bundleId = finder.getBundleId(for: "QQMusic") else {
+            throw MusicError.configNotFound
+        }
+        
         // Launch QQ Music if not running
         if qqMusicApp == nil || qqMusicApp!.isTerminated {
-            // 使用新的 API 启动应用
             let config = NSWorkspace.OpenConfiguration()
-            guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: qqMusicBundleId) else {
+            guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
                 throw MusicError.appLaunchFailed
             }
             
@@ -29,7 +29,7 @@ class QQMusicController {
             }
             
             // Get the running application after launch
-            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: qqMusicBundleId).first else {
+            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first else {
                 throw MusicError.appLaunchFailed
             }
             qqMusicApp = app
@@ -147,6 +147,7 @@ class QQMusicController {
 }
 
 enum MusicError: Error {
+    case configNotFound
     case appLaunchFailed
     case windowNotFound
     case searchBoxNotFound

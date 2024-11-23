@@ -1,1 +1,10 @@
 .DS_Store
+xcuserdata/
+*.xcuserdata
+*.xcuserdatad
+*.xccheckout
+*.xcscmblueprint
+UI_CONFIG.yaml
+
+# Xcode workspace
+xcshareddata/

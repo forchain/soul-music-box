@@ -1,0 +1,28 @@
+QQMusic:
+  bundleId: "com.tencent.QQMusicMac"
+  elements:
+    searchBox:
+      role: "AXWindow"
+      identifier: "QQ音乐"
+      matchType: "contains"
+      children:
+        - role: "AXToolbar"
+          children:
+            - role: "AXSearchField"
+              identifier: "搜索"
+              matchType: "contains"
+    
+    searchResults:
+      role: "AXWindow"
+      identifier: "搜索结果"
+      matchType: "contains"
+      children:
+        - role: "AXTable"
+          identifier: "搜索结果列表"
+          children:
+            - role: "AXRow"
+              index: 0  # 第一个结果
+              children:
+                - role: "AXButton"
+                  identifier: "播放"
+                  matchType: "contains" 

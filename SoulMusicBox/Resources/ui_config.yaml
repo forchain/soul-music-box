@@ -1,0 +1,54 @@
+QQMusic:
+  bundleId: "com.tencent.QQMusicMac"
+  elements:
+    mainWindow:
+      role: "AXWindow"
+      label: "QQ音乐"
+      matchType: "contains"
+    
+    searchBox:
+      role: "AXSearchField"
+      label: "搜索"
+      matchType: "contains"
+    
+    searchResults:
+      role: "AXTable"
+      identifier: "搜索结果列表"
+      children:
+        - role: "AXRow"
+          index: 0
+    
+    playButton:
+      role: "AXButton"
+      label: "播放"
+      matchType: "contains"
+
+Soul:
+  bundleId: "com.soul.macapp"
+  elements:
+    chatInput:
+      role: "AXWindow"
+      label: "聊天"
+      matchType: "contains"
+      children:
+        - role: "AXGroup"
+          label: "聊天区域"
+          children:
+            - role: "AXTextArea"
+              identifier: "输入框"
+
+    chatHistory:
+      role: "AXGroup"
+      identifier: "SOKeyWindow"
+      children:
+        - role: "AXGroup"
+          identifier: "UIViewControllerWrapperView"
+          children:
+            - role: "AXTable"
+              identifier: "SOScrollListTableView"
+              children:
+                - role: "AXGroup"
+                  identifier: "SOScrollListCell"
+                  children:
+                    - role: "AXStaticText"
+                      identifier: "SOCPTextMsgCell"

@@ -17,11 +17,6 @@ QQMusic:
       children:
         - role: "AXRow"
           index: 0
-    
-    playButton:
-      role: "AXButton"
-      label: "播放"
-      matchType: "contains"
 
 Soul:
   bundleId: "com.soulapp.cn"

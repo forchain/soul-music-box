@@ -5,6 +5,7 @@ import Yams
 struct UIElementPath {
     let role: String
     let identifier: String?
+    let className: String?
     let label: String?
     let index: Int?
     let matchType: MatchType
@@ -12,12 +13,14 @@ struct UIElementPath {
     
     init(role: String, 
          identifier: String? = nil, 
+         className: String? = nil, 
          label: String? = nil, 
          index: Int? = nil, 
          matchType: MatchType = .contains, 
          children: [UIElementPath]? = nil) {
         self.role = role
         self.identifier = identifier
+        self.className = className
         self.label = label
         self.index = index
         self.matchType = matchType
@@ -27,6 +30,7 @@ struct UIElementPath {
     var description: String {
         var desc = "Role: \(role)"
         if let id = identifier { desc += ", Identifier: \(id)" }
+        if let cn = className { desc += ", Class: \(cn)" }
         if let lb = label { desc += ", Label: \(lb)" }
         if let idx = index { desc += ", Index: \(idx)" }
         desc += ", MatchType: \(matchType)"
@@ -104,6 +108,7 @@ class UIElementFinder {
         return UIElementPath(
             role: element.role,
             identifier: element.identifier,
+            className: element.className,
             label: element.label,
             index: element.index,
             matchType: element.matchType ?? .contains,
@@ -131,9 +136,22 @@ class UIElementFinder {
         var childrenRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(parent, kAXChildrenAttribute as CFString, &childrenRef)
         
-        guard result == .success,
-              let children = childrenRef as? [AXUIElement] else {
-            logger.error("Failed to get children for element: \(path.description)")
+        if result == .apiDisabled {
+            logger.error("Accessibility API is disabled")
+            throw ConfigError.accessibilityDisabled
+        } else if result == .notImplemented {
+            logger.error("Application does not support accessibility API")
+            throw ConfigError.accessibilityNotSupported
+        } else if result == .cannotComplete {
+            logger.error("Cannot access application. Try removing and re-adding accessibility permissions")
+            throw ConfigError.accessibilityCannotComplete
+        } else if result != .success {
+            logger.error("Failed to get children: \(result)")
+            throw ConfigError.accessibilityError(result)
+        }
+        
+        guard let children = childrenRef as? [AXUIElement] else {
+            logger.error("No children found or invalid type")
             return nil
         }
         
@@ -196,17 +214,27 @@ class UIElementFinder {
             return false
         }
         
-        // 检查标识符（Description）
+        // 检查标识符
         if let identifier = path.identifier {
-            var descriptionRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXDescriptionAttribute as CFString, &descriptionRef)
-            guard let description = descriptionRef as? String,
-                  matchesString(description, pattern: identifier, type: path.matchType) else {
+            var identifierRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXIdentifierAttribute as CFString, &identifierRef)
+            guard let elementIdentifier = identifierRef as? String,
+                  matchesString(elementIdentifier, pattern: identifier, type: path.matchType) else {
                 return false
             }
         }
         
-        // 检查标签（Label）
+        // 检查类名
+        if let className = path.className {
+            var classRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, "AXClassDescription" as CFString, &classRef)
+            guard let elementClass = classRef as? String,
+                  matchesString(elementClass, pattern: className, type: path.matchType) else {
+                return false
+            }
+        }
+        
+        // 检查标签
         if let label = path.label {
             var titleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleRef)
@@ -248,6 +276,10 @@ enum ConfigError: Error {
     case appConfigNotFound
     case elementPathNotFound
     case invalidConfig
+    case accessibilityDisabled
+    case accessibilityNotSupported
+    case accessibilityCannotComplete
+    case accessibilityError(AXError)
 }
 
 // YAML 配置解析模型
@@ -264,13 +296,14 @@ private struct AppConfig: Decodable {
 private struct ElementConfig: Decodable {
     let role: String
     let identifier: String?
+    let className: String?
     let label: String?
     let index: Int?
     let matchType: MatchType?
     let children: [ElementConfig]?
     
     private enum CodingKeys: String, CodingKey {
-        case role, identifier, label, index, matchType, children
+        case role, identifier, className, label, index, matchType, children
     }
     
     init(from decoder: Decoder) throws {
@@ -278,6 +311,7 @@ private struct ElementConfig: Decodable {
         
         role = try container.decode(String.self, forKey: .role)
         identifier = try container.decodeIfPresent(String.self, forKey: .identifier)
+        className = try container.decodeIfPresent(String.self, forKey: .className)
         label = try container.decodeIfPresent(String.self, forKey: .label)
         index = try container.decodeIfPresent(Int.self, forKey: .index)
         matchType = try container.decodeIfPresent(MatchType.self, forKey: .matchType)

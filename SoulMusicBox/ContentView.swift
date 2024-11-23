@@ -69,7 +69,7 @@ struct ElementCheckSection: View {
         GroupBox("控件检查") {
             List {
                 ForEach(viewModel.elementCheckResults) { result in
-                    ElementCheckRow(result: result)
+                    ElementCheckRow(result: result, viewModel: viewModel)
                 }
             }
             .frame(height: 200)
@@ -83,10 +83,19 @@ struct LogSection: View {
     
     var body: some View {
         GroupBox("日志") {
-            ScrollView {
-                VStack(alignment: .leading) {
-                    ForEach(logs) { log in
-                        LogEntryView(log: log)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading) {
+                        ForEach(logs) { log in
+                            LogEntryView(log: log)
+                                .id(log.id)  // 为每个日志条目添加 id
+                        }
+                    }
+                }
+                .onChange(of: logs.count) { _ in
+                    // 当日志数量变化时，滚动到最后一条
+                    if let lastLog = logs.last {
+                        proxy.scrollTo(lastLog.id, anchor: .bottom)
                     }
                 }
             }
@@ -118,12 +127,21 @@ struct StatusRow: View {
 
 struct ElementCheckRow: View {
     let result: ElementCheckResult
+    @ObservedObject var viewModel: ContentViewModel
     
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
                 Text(result.elementPath)
                 Spacer()
+                Button(action: {
+                    generateUITree(for: result.elementPath)
+                }) {
+                    Image(systemName: "doc.badge.plus")
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .focusable(false)
                 Image(systemName: result.found ? "checkmark.circle.fill" : "x.circle.fill")
                     .foregroundColor(result.found ? .green : .red)
             }
@@ -131,6 +149,101 @@ struct ElementCheckRow: View {
                 Text(result.error ?? "未找到控件")
                     .font(.caption)
                     .foregroundColor(.red)
+            }
+        }
+    }
+    
+    private func generateUITree(for elementPath: String) {
+        // 解析路径获取应用名和元素名
+        let components = elementPath.split(separator: ".")
+        guard components.count == 2,
+              let app = components.first.map(String.init),
+              let bundleId = viewModel.getBundleId(for: app) else {
+            viewModel.logError("Invalid element path or app not found in config: \(elementPath)")
+            return
+        }
+        
+        // 获取应用进程
+        guard let runningApp = NSWorkspace.shared.runningApplications.first(where: { app in
+            app.bundleIdentifier == bundleId
+        }) else {
+            viewModel.logError("Application not running: \(bundleId)")
+            return
+        }
+        
+        viewModel.logInfo("Generating UI tree for \(app) (pid: \(runningApp.processIdentifier))")
+        
+        // 生成 UI 树
+        let appRef = AXUIElementCreateApplication(runningApp.processIdentifier)
+        
+        // 详细的权限检查
+        var value: AnyObject?
+        let result = AXUIElementCopyAttributeValue(appRef, kAXRoleAttribute as CFString, &value)
+        
+        if result == .apiDisabled {
+            viewModel.logError("Accessibility API is disabled. Please enable it in System Preferences.")
+            return
+        } else if result == .notImplemented {
+            viewModel.logError("Application does not support accessibility API.")
+            return
+        } else if result == .cannotComplete {
+            viewModel.logError("Failed to access application. Try these steps:")
+            viewModel.logError("1. Remove the app from accessibility list")
+            viewModel.logError("2. Restart the app")
+            viewModel.logError("3. Add the app back to accessibility list when prompted")
+            viewModel.logError("4. If not prompted, manually add the app")
+            return
+        } else if result != .success {
+            viewModel.logError("Unknown error accessing application: \(result)")
+            return
+        }
+        
+        viewModel.logInfo("Successfully accessed application root element")
+        
+        // 额外的权限验证
+        var processAttrib: pid_t = 0
+        let pidResult = AXUIElementGetPid(appRef, &processAttrib)
+        if pidResult != .success {
+            viewModel.logError("Failed to get process ID: \(pidResult)")
+            return
+        }
+        
+        if processAttrib != runningApp.processIdentifier {
+            viewModel.logError("Process ID mismatch. Expected: \(runningApp.processIdentifier), Got: \(processAttrib)")
+            return
+        }
+        
+        viewModel.logInfo("Process ID verification passed")
+        
+        // 生成 UI 树
+        let uiTree = viewModel.generateUITree(for: appRef)
+        if uiTree.isEmpty {
+            viewModel.logError("Failed to generate UI tree: no elements found")
+            return
+        }
+        
+        // 生成 YAML
+        let yaml = """
+        \(app):
+          bundleId: "\(bundleId)"
+          elements:
+        \(uiTree.indented(by: 4))
+        """
+        
+        // 保存到文件
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
+        let timestamp = dateFormatter.string(from: Date())
+        let filename = "\(app)_UITree_\(timestamp).yaml"
+        
+        if let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let fileURL = dir.appendingPathComponent(filename)
+            do {
+                try yaml.write(to: fileURL, atomically: true, encoding: .utf8)
+                viewModel.logInfo("UI tree saved to: \(fileURL.path)")
+                NSWorkspace.shared.selectFile(fileURL.path, inFileViewerRootedAtPath: "")
+            } catch {
+                viewModel.logError("Failed to save UI tree: \(error)")
             }
         }
     }
@@ -155,8 +268,8 @@ class ContentViewModel: ObservableObject {
     @Published var logs: [LogEntry] = []
     @Published var showAccessibilityInstructions = false
     
-    private let finder = UIElementFinder.shared
-    private let logger = Logger.shared
+    let finder = UIElementFinder.shared
+    let logger = Logger.shared
     
     init() {
         setupLoggerCallback()
@@ -254,6 +367,77 @@ class ContentViewModel: ObservableObject {
             }
         }
     }
+    
+    func getBundleId(for app: String) -> String? {
+        return finder.getBundleId(for: app)
+    }
+    
+    func logInfo(_ message: String) {
+        logger.info(message)
+    }
+    
+    func logError(_ message: String) {
+        logger.error(message)
+    }
+    
+    func generateUITree(for element: AXUIElement) -> String {
+        var tree = ""
+        
+        // 获取元素角色
+        var roleRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+        
+        guard result == .success,
+              let role = roleRef as? String else {
+            logger.error("Failed to get role for element")
+            return ""
+        }
+        
+        logger.debug("Found element with role: \(role)")
+        tree += "role: \"\(role)\"\n"
+        
+        // 获取元素标识符
+        var identifierRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXIdentifierAttribute as CFString, &identifierRef)
+        if let identifier = identifierRef as? String {
+            logger.debug("  identifier: \(identifier)")
+            tree += "identifier: \"\(identifier)\"\n".indented(by: 0)
+        }
+        
+        // 获取类名
+        var classRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, "AXClassDescription" as CFString, &classRef)
+        if let className = classRef as? String {
+            logger.debug("  className: \(className)")
+            tree += "className: \"\(className)\"\n".indented(by: 0)
+        }
+        
+        // 获取元素标签
+        var labelRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &labelRef)
+        if let label = labelRef as? String {
+            logger.debug("  label: \(label)")
+            tree += "label: \"\(label)\"\n".indented(by: 0)
+        }
+        
+        // 获取子元素
+        var childrenRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
+        if let children = childrenRef as? [AXUIElement], !children.isEmpty {
+            logger.debug("  found \(children.count) children")
+            tree += "children:\n"
+            for (index, child) in children.enumerated() {
+                logger.debug("  processing child \(index)")
+                tree += "- # index: \(index)\n".indented(by: 2)
+                let childTree = generateUITree(for: child)
+                if !childTree.isEmpty {
+                    tree += childTree.indented(by: 4)
+                }
+            }
+        }
+        
+        return tree
+    }
 }
 
 // 模型
@@ -320,7 +504,7 @@ struct AccessibilityPermissionAlert: View {
                 Text("4. 在 Finder 中前往以下路径：")
                 Text("   \(Bundle.main.bundlePath)")
                     .foregroundColor(.blue)
-                    .textSelection(.enabled)  // 允许用户选择和复制路径
+                    .textSelection(.enabled)  // 许用户选择和复制路径
                 Text("5. 选择该应用并授权")
                 Text("6. 重启应用以使权限生效")
             }
@@ -371,4 +555,14 @@ struct PlainButtonStyle: ButtonStyle {
 
 #Preview {
     ContentView()
+}
+
+// 添加 String 扩展
+extension String {
+    func indented(by spaces: Int) -> String {
+        let indent = String(repeating: " ", count: spaces)
+        return self.components(separatedBy: .newlines)
+            .map { $0.isEmpty ? $0 : indent + $0 }
+            .joined(separator: "\n")
+    }
 }
